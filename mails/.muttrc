@@ -1,0 +1,18 @@
+set from = 'dmarc@example.com'
+set realname = 'DMARC'
+
+set folder = "imaps://localhost:993/"
+set imap_user = "dmarc"
+set imap_pass = "pass"
+set spoolfile = "+someMails"
+set postponed = "+Drafts"
+set record = "+Sent"
+set trash = "+Trash"
+set imap_check_subscribed = yes
+#set imap_list_subscribed = yes
+mailboxes someMails
+set sort_browser = 'date' # default: 'alpha'
+
+
+# Format de date
+set date_format="%A %d %b %Y à %H:%M:%S (%Z)"
