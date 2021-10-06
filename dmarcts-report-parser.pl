@@ -1,4 +1,5 @@
 #!/usr/bin/perl
+# vim: noexpandtab
 
 ################################################################################
 # dmarcts-report-parser - A Perl based tool to parse DMARC reports from an IMAP
