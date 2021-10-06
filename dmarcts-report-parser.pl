@@ -838,8 +838,8 @@ sub storeXMLInDatabase {
 		}
 	}
 
-	my $sql = qq{INSERT INTO report(serial,mindate,maxdate,domain,org,reportid,email,extra_contact_info,policy_adkim, policy_aspf, policy_p, policy_sp, policy_pct, raw_xml)
-			VALUES(NULL,FROM_UNIXTIME(?),FROM_UNIXTIME(?),?,?,?,?,?,?,?,?,?,?,?)};
+	my $sql = qq{INSERT INTO report(mindate,maxdate,domain,org,reportid,email,extra_contact_info,policy_adkim, policy_aspf, policy_p, policy_sp, policy_pct, raw_xml)
+			VALUES(FROM_UNIXTIME(?),FROM_UNIXTIME(?),?,?,?,?,?,?,?,?,?,?,?)};
 	my $storexml = $xml->{'raw_xml'};
 	if ($compress_xml) {
 		my $gzipdata;
@@ -855,13 +855,13 @@ sub storeXMLInDatabase {
 		warn "$scriptname: $org: $id: Skipping storage of large XML (".length($storexml)." bytes) as defined in config file.\n";
 		$storexml = "";
 	}
-	$dbh->do($sql, undef, $from, $to, $domain, $org, $id, $email, $extra, $policy_adkim, $policy_aspf, $policy_p, $policy_sp, $policy_pct, $storexml);
+	$dbh->do(adaptSql($sql), undef, $from, $to, $domain, $org, $id, $email, $extra, $policy_adkim, $policy_aspf, $policy_p, $policy_sp, $policy_pct, $storexml);
 	if ($dbh->errstr) {
 		warn "$scriptname: $org: $id: Cannot add report to database. Skipped.\n";
 		return 0;
 	}
 
-	my $serial = $dbh->{'mysql_insertid'} ||  $dbh->{'insertid'};
+	my $serial = $dbh->last_insert_id(undef, undef, 'report', 'serial') || $dbh->{'mysql_insertid'} ||  $dbh->{'insertid'};
 	if ($debug){
 		print " serial $serial \n";
 	}
@@ -994,8 +994,12 @@ sub storeXMLInDatabase {
 			return 0;
 		}
 
-		$dbh->do(qq{INSERT INTO rptrecord(serial,$iptype,rcount,disposition,spf_align,dkim_align,reason,dkimdomain,dkimresult,spfdomain,spfresult,identifier_hfrom)
-			VALUES(?,$ipval,?,?,?,?,?,?,?,?,?,?)},undef,$serial,$count,$disp,$spf_align,$dkim_align,$reason,$dkim,$dkimresult,$spf,$spfresult,$identifier_hfrom);
+		if ($dbdrivername eq 'Pg' ) {
+			$ipval = "'" . $ip . "'";
+		}
+
+		$dbh->do(adaptSql(qq{INSERT INTO rptrecord(serial,$iptype,rcount,disposition,spf_align,dkim_align,reason,dkimdomain,dkimresult,spfdomain,spfresult,identifier_hfrom)
+			VALUES(?,$ipval,?,?,?,?,?,?,?,?,?,?)}),undef,$serial,$count,$disp,$spf_align,$dkim_align,$reason,$dkim,$dkimresult,$spf,$spfresult,$identifier_hfrom);
 		if ($dbh->errstr) {
 			warn "$scriptname: $org: $id: Cannot add report data to database. Skipped.\n";
 			return 0;
@@ -1048,6 +1052,55 @@ sub storeXMLInDatabase {
 
 ################################################################################
 
+# Manipulate sql requests to make it work on different database
+sub adaptSql {
+	my $sql = $_[0];
+
+	if ($dbdrivername eq 'Pg' ) {
+		# Handle inet types
+		$sql =~ s/binary\(16\)/inet/g;
+		$sql =~ s/ip int\(10\) unsigned/ip inet/g;
+
+		# Remove int type length
+		$sql =~ s/int(\(\d*\))? (unsigned)?/integer/g;
+
+		# Replace auto_increment by Serial
+		$sql =~ s/integer (NOT NULL )?AUTO_INCREMENT/serial/g;
+
+		# Remove ON UPDATE statement #TODO
+		$sql =~ s/ON UPDATE CURRENT_TIMESTAMP//g;
+
+		# Rename UNIQUE constraint
+		$sql =~ s/UNIQUE KEY \w* \(/UNIQUE \(/g;
+		$sql =~ s/KEY \w* \(/UNIQUE \(/g;
+
+		# Replace some types
+		$sql =~ s/tinyinteger/smallint/g;
+		$sql =~ s/mediumtext/text/g;
+
+		# Remove raw format
+		$sql =~ s/ ROW_FORMAT=COMPRESSED//g;
+
+		# Fix some functions
+		$sql =~ s/FROM_UNIXTIME/to_timestamp/g;
+	}
+
+	return $sql;
+}
+
+sub createEnumType {
+	my $enumName = $_[0];
+	my @enumValues = $_[1];
+
+	if ($dbdrivername eq 'Pg') {
+		return $enumName;
+	} elsif ($dbdrivername eq 'mysql') {
+		return "enum('" . join("','", @enumValues) . "')";
+	}
+}
+
+################################################################################
+
 # Check, if the database contains needed tables and columns. The idea is, that
 # the user only has to create the database/database_user. All needed tables and
 # columns are created automatically. Furthermore, if new columns are introduced,
@@ -1056,7 +1109,7 @@ sub checkDatabase {
 	my $dbh = $_[0];
 
 	my %enums = (
-		'ALLOWED_DISPOSITION' => [ ALLOWED_DISPOSITION],
+		'ALLOWED_DISPOSITION' => [ ALLOWED_DISPOSITION ],
 		'ALLOWED_DKIMRESULT' => [ ALLOWED_DKIMRESULT ],
 		'ALLOWED_SPFRESULT' => [ ALLOWED_SPFRESULT ],
 		'ALLOWED_SPF_ALIGN' => [ ALLOWED_SPF_ALIGN ],
@@ -1091,21 +1144,20 @@ sub checkDatabase {
 				"ip"			, "int(10) unsigned",
 				"ip6"			, "binary(16)",
 				"rcount"		, "int(10) unsigned NOT NULL",
-				"disposition"		, "enum('" . join("','", ALLOWED_DISPOSITION) . "')",
+				"disposition"	, createEnumType('ALLOWED_DISPOSITION', ALLOWED_DISPOSITION),
 				"reason"		, "varchar(255)",
-				"dkimdomain"		, "varchar(255)",
-				"dkimresult"		, "enum('" . join("','", ALLOWED_DKIMRESULT) . "')",
+				"dkimdomain"	, "varchar(255)",
+				"dkimresult"	, createEnumType('ALLOWED_DKIMRESULT', ALLOWED_DKIMRESULT),
 				"spfdomain"		, "varchar(255)",
-				"spfresult"		, "enum('" . join("','", ALLOWED_SPFRESULT) . "')",
-				"spf_align"		, "enum('" . join("','", ALLOWED_SPF_ALIGN) . "') NOT NULL",
-				"dkim_align"		, "enum('" . join("','", ALLOWED_DKIM_ALIGN) . "') NOT NULL",
+				"spfresult"		, createEnumType('ALLOWED_SPFRESULT', ALLOWED_SPFRESULT),
+				"spf_align"		, createEnumType('ALLOWED_SPF_ALIGN', ALLOWED_SPF_ALIGN) . " NOT NULL",
+				"dkim_align"		, createEnumType('ALLOWED_DKIM_ALIGN', ALLOWED_DKIM_ALIGN) . " NOT NULL",
 				"identifier_hfrom"	, "varchar(255)",
 				],
 			additional_definitions 		=> "KEY serial (serial,ip), KEY serial6 (serial,ip6)",
 			table_options			=> "",
 			},
 	);
-
 
 	# For Pg driver, get current enums
 	my %db_enum_exists = ();
@@ -1127,11 +1179,9 @@ sub checkDatabase {
 		}
 	}
 
-	
-
 	# Get current tables in this DB.
 	my %db_tbl_exists = ();
-	for ( $dbh->tables() ) {
+	for ( $dbh->tables('', undef, undef, 'TABLE', {pg_noprefix => 1}) ) {
 		$db_tbl_exists{$_} = 1;
 	}
 
@@ -1159,13 +1209,15 @@ sub checkDatabase {
 			# Add options.
 			$sql_create_table .= ") " . $tables{$table}{"table_options"} . ";";
 			# Create table.
+			$sql_create_table = adaptSql($sql_create_table);
 			print "$sql_create_table\n" if $debug;
 			$dbh->do($sql_create_table);
-		} else {
+		} elsif ($dbdrivername eq 'mysql' ) {
 
-			#Table exists, get  current columns in this table from DB.
+			#Table exists, get current columns in this table from DB.
 			my %db_col_exists = ();
-			for ( @{ $dbh->selectall_arrayref( "SHOW COLUMNS FROM $table;") } ) {
+			#for ( @{ $dbh->selectall_arrayref( "SHOW COLUMNS FROM $table;") } ) {
+			for ( $dbh->column_info( undef, 'public', $table, undef ) ) {
 				$db_col_exists{$_->[0]} = $_->[1];
 			};
 
