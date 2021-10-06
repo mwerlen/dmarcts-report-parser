@@ -119,13 +119,14 @@ sub show_usage {
 
 # Define all possible configuration options.
 our ($debug, $delete_reports, $delete_failed, $reports_replace, $maxsize_xml, $compress_xml,
-	$dbname, $dbuser, $dbpass, $dbhost, $dbport, $db_tx_support,
+	$dbdrivername, $dbname, $dbuser, $dbpass, $dbhost, $dbport, $db_tx_support,
   $imapserver, $imapport, $imapuser, $imappass, $imapignoreerror, $imapssl, $imaptls, $imapmovefolder,
 	$imapmovefoldererr, $imapreadfolder, $imapopt, $tlsverify, $processInfo);
 
 # defaults
 $maxsize_xml 	= 50000;
 $db_tx_support	= 1;
+$dbdrivername	= 'mysql';
 
 # used in messages
 my $scriptname = 'dmarcts-report-parser.pl';
@@ -264,7 +265,7 @@ if (exists $options{delete}) {$delete_reports = 1;}
 if (exists $options{info}) {$processInfo = 1;}
 
 # Setup connection to database server.
-my $dbh = DBI->connect("DBI:mysql:database=$dbname;host=$dbhost;port=$dbport",
+my $dbh = DBI->connect("DBI:$dbdrivername:database=$dbname;host=$dbhost;port=$dbport",
 	$dbuser, $dbpass)
 or die "$scriptname: Cannot connect to database\n";
 checkDatabase($dbh);
@@ -1054,6 +1055,14 @@ sub storeXMLInDatabase {
 sub checkDatabase {
 	my $dbh = $_[0];
 
+	my %enums = (
+		'ALLOWED_DISPOSITION' => [ ALLOWED_DISPOSITION],
+		'ALLOWED_DKIMRESULT' => [ ALLOWED_DKIMRESULT ],
+		'ALLOWED_SPFRESULT' => [ ALLOWED_SPFRESULT ],
+		'ALLOWED_SPF_ALIGN' => [ ALLOWED_SPF_ALIGN ],
+		'ALLOWED_DKIM_ALIGN' => [ ALLOWED_DKIM_ALIGN ]
+		);
+
 	my %tables = (
 		"report" => {
 			column_definitions 		=> [
@@ -1097,10 +1106,33 @@ sub checkDatabase {
 			},
 	);
 
+
+	# For Pg driver, get current enums
+	my %db_enum_exists = ();
+	if ($dbdrivername eq 'Pg' ) {
+		my $sql = "select distinct upper(typname) as name from pg_type JOIN pg_enum ON pg_enum.enumtypid = pg_type.oid;";
+		my @fetched_enums = $dbh->selectall_array($sql);
+		foreach my $fetched_enum ( @fetched_enums ) {
+			$db_enum_exists{@$fetched_enum[0]} = 1;
+		}
+
+		for my $enum ( keys %enums ) {
+
+			if (!$db_enum_exists{$enum}) {
+				print "Adding missing enum <" . $enum . "> to the database.\n";
+				my $sql_create_enum = "CREATE TYPE " . $enum . " AS ENUM ('" . join("','", @{$enums{$enum}} ) . "');";
+				print $sql_create_enum . "\n";
+				$dbh->do($sql_create_enum);
+			}
+		}
+	}
+
+	
+
 	# Get current tables in this DB.
 	my %db_tbl_exists = ();
-	for ( @{ $dbh->selectall_arrayref( "SHOW TABLES;") } ) {
-		$db_tbl_exists{$_->[0]} = 1;
+	for ( $dbh->tables() ) {
+		$db_tbl_exists{$_} = 1;
 	}
 
 	# Create missing tables and missing columns.
