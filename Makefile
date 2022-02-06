@@ -8,9 +8,11 @@ help:
 	@echo "make check			- Run a checkstyle analysis"
 	@echo "make postgres		- Run a postgres 12 container in foreground"
 	@echo "make psql			- Run a psql console"
+	@echo "make mutt			- Run mutt"
+	@echo "make dovecot			- Run a dovecot server"
 
 init:
-	sudo apt-get install libfile-mimeinfo-perl libmail-imapclient-perl libmime-tools-perl libxml-simple-perl libclass-dbi-pg-perl libio-socket-inet6-perl libio-socket-ip-perl libperlio-gzip-perl libmail-mbox-messageparser-perl unzip
+	sudo apt-get install libfile-mimeinfo-perl libmail-imapclient-perl libmime-tools-perl libxml-simple-perl libclass-dbi-pg-perl libio-socket-inet6-perl libio-socket-ip-perl libperlio-gzip-perl libmail-mbox-messageparser-perl unzip libb-lint-perl
 
 test:
 	@echo "Not implemented"
